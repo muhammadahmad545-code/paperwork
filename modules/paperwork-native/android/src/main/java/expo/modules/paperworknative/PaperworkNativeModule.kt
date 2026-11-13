@@ -137,7 +137,10 @@ class PaperworkNativeModule : Module() {
 
     Function("clearPlainCache") { Vault.clearPlain(context) }
 
-    Function("sweepCaches") { Vault.sweepCaches(context) }
+    /** Skipped while a recovered scan is waiting: its pages live in the scanner's cache folder. */
+    Function("sweepCaches") {
+      if (prefs().contains("pendingScan")) Vault.clearPlain(context) else Vault.sweepCaches(context)
+    }
 
     AsyncFunction("sweepOrphans") { keepDocIds: List<String> -> Vault.sweepOrphans(context, keepDocIds.toSet()) }
 

@@ -43,12 +43,10 @@ export default function Capture() {
         if (source === 'recover') {
           uris = Native.takePendingScan();
         } else if (source === 'scan') {
-          lock.expectExternal();
-          uris = await Native.scan(20);
+          uris = await lock.runExternal(() => Native.scan(20));
         } else {
-          lock.expectExternal();
           // No cache copy: the native side reads content:// directly, so no plaintext duplicate is made.
-          const result = await DocumentPicker.getDocumentAsync({ type: 'image/*', multiple: true, copyToCacheDirectory: false });
+          const result = await lock.runExternal(() => DocumentPicker.getDocumentAsync({ type: 'image/*', multiple: true, copyToCacheDirectory: false }));
           uris = result.canceled ? [] : result.assets.map((a) => a.uri);
         }
       } catch (error) {
@@ -60,6 +58,7 @@ export default function Capture() {
         return;
       }
       if (uris.length === 0) {
+        if (source === 'recover') toast('The pages from that scan were no longer available. Please scan again.', 'danger');
         router.back();
         return;
       }
@@ -77,7 +76,7 @@ export default function Capture() {
         if (alive.current) setPhase({ name: 'error', message: toMessage(error, 'Could not process the pages.'), canImport: false });
       }
     },
-    [router, lock],
+    [router, lock, toast],
   );
 
   useEffect(() => {

@@ -89,8 +89,7 @@ export default function DocumentScreen() {
     try {
       const uri = kind === 'pdf' ? await Native.exportPdf(pages.map((p) => p.name), doc.title) : await Native.exportPage(pages[0].name, doc.title);
       if (!(await Sharing.isAvailableAsync())) return toast('Sharing is not available on this phone.', 'danger');
-      lock.expectExternal();
-      await Sharing.shareAsync(uri, { mimeType: kind === 'pdf' ? 'application/pdf' : 'image/jpeg', dialogTitle: doc.title });
+      await lock.runExternal(() => Sharing.shareAsync(uri, { mimeType: kind === 'pdf' ? 'application/pdf' : 'image/jpeg', dialogTitle: doc.title }));
     } catch (error) {
       toast(toMessage(error, 'Could not prepare the file.'), 'danger');
     } finally {

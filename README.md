@@ -4,6 +4,16 @@ Scan bills, receipts, ID cards, warranties and prescriptions. Paperwork reads th
 
 **[Download the latest APK](https://github.com/muhammadahmad545-code/paperwork/releases/latest)**
 
+## What's new in 1.1
+
+- **Saving works reliably.** Version 1.0 opened write transactions on a second database connection that SQLCipher had no key for; all writes now run on the keyed connection.
+- **Redesigned** with tab navigation (Library, Upcoming, Insights, Settings), a capture hero, progress ring while reading, and a first-run introduction.
+- **Safer pages:** every page is decoded at a bounded size (no out-of-memory on 100 MP photos), stored as an encrypted JPEG plus a thumbnail, and the plaintext scanner and picker copies are deleted. Leftover files are swept on launch.
+- **Scans survive Android killing the app** while the camera is open, and can be finished on the next launch.
+- **New:** pin documents, add or remove dates by hand, full-screen page viewer, share a single page, spending insights by month and type, coverage ring for reminders.
+- **Privacy:** with the lock on, documents are hidden from screenshots and the recent-apps view; reminders are only scheduled after a document is saved, and follow title changes.
+- **Smarter reading:** dates of birth no longer hide an expiry on the same line; item counts, savings and dates are no longer mistaken for totals.
+
 ## What it does
 
 - **Scan** with automatic edge detection, perspective correction and cleanup, or **import** photos you already have.
