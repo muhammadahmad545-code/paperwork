@@ -28,8 +28,9 @@ test('month-year expiries mean the end of that month', () => {
   assert.deepEqual(kinds('Best before Feb 2028'), ['expiry:2028-02-29']);
 });
 
-test('skips dates of birth', () => {
+test('skips dates of birth, even on the same line as an expiry', () => {
   assert.deepEqual(kinds('Date of Birth 14/08/1998\nDate of Expiry 14/08/2030'), ['expiry:2030-08-14']);
+  assert.deepEqual(kinds('DOB 14/08/1998  Expiry 14/08/2030'), ['expiry:2030-08-14']);
 });
 
 test('turns a warranty period into an end date', () => {
@@ -44,6 +45,12 @@ test('finds the final total, not a subtotal', () => {
   assert.equal(findAmount('AMOUNT PAYABLE\n3,560')?.value, 3560);
   assert.equal(findAmount('Total: $42.10')?.currency, 'USD');
   assert.equal(findAmount('No money here'), null);
+});
+
+test('ignores item counts, savings and dates next to total words', () => {
+  assert.equal(findAmount('Total Rs 1,860\nTotal Items 3\nTotal Savings 40')?.value, 1860);
+  assert.equal(findAmount('Amount due 15-11-2026 Rs 4,200')?.value, 4200);
+  assert.equal(findAmount('Sub Total 900\nTotal 1,050')?.value, 1050);
 });
 
 test('classifies documents by their vocabulary', () => {

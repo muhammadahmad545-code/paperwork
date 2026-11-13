@@ -6,7 +6,7 @@ import type { ImageStyle, StyleProp } from 'react-native';
 import { Native } from '../lib/capture';
 
 /** Decrypts a stored page on demand and shows it. */
-export function PageImage({ name, style }: { name: string | null; style: StyleProp<ImageStyle> }) {
+export function PageImage({ name, style, fit = 'cover' }: { name: string | null; style: StyleProp<ImageStyle>; fit?: 'cover' | 'contain' }) {
   const { colors } = useTheme();
   const [uri, setUri] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
@@ -22,7 +22,7 @@ export function PageImage({ name, style }: { name: string | null; style: StylePr
       alive = false;
     };
   }, [name]);
-  if (uri) return <Image source={{ uri }} style={style} resizeMode="cover" accessibilityIgnoresInvertColors />;
+  if (uri) return <Image source={{ uri }} style={style} resizeMode={fit} accessibilityIgnoresInvertColors />;
   return (
     <View style={[{ alignItems: 'center', justifyContent: 'center', backgroundColor: colors.surfaceRaised }, style as object]}>
       {name && !failed ? <ActivityIndicator color={colors.accent} /> : <FileText size={22} color={colors.textFaint} />}

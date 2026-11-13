@@ -2,14 +2,12 @@ package expo.modules.paperworknative
 
 import android.app.Activity
 import android.content.Context
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.graphics.Color
 import android.graphics.Rect
 import android.graphics.pdf.PdfDocument
 import android.net.Uri
+import android.view.WindowManager
 import com.google.android.gms.tasks.Tasks
-import com.google.mlkit.common.MlKitException
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.documentscanner.GmsDocumentScannerOptions
 import com.google.mlkit.vision.documentscanner.GmsDocumentScanning
@@ -21,6 +19,7 @@ import expo.modules.kotlin.exception.CodedException
 import expo.modules.kotlin.exception.Exceptions
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
+import org.json.JSONArray
 import java.io.File
 import java.io.FileOutputStream
 
@@ -34,15 +33,9 @@ class PaperworkNativeModule : Module() {
 
   private val recognizer by lazy { TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS) }
 
-  /** Decode at most ~maxSide pixels on the long edge to keep memory bounded for big scans. */
-  private fun decodeBounded(bytes: ByteArray, maxSide: Int): Bitmap {
-    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-    BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
-    var sample = 1
-    while (maxOf(bounds.outWidth, bounds.outHeight) / sample > maxSide) sample *= 2
-    return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample })
-      ?: throw PaperworkError("A page could not be read as an image.")
-  }
+  private fun prefs() = context.getSharedPreferences("paperwork_native", Context.MODE_PRIVATE)
+
+  private fun sanitize(name: String) = name.replace(Regex("[^A-Za-z0-9 ._-]"), "").trim().ifEmpty { "Document" }.take(80)
 
   override fun definition() = ModuleDefinition {
     Name("PaperworkNative")
@@ -75,53 +68,101 @@ class PaperworkNativeModule : Module() {
 
     OnActivityResult { _, payload ->
       if (payload.requestCode != SCAN_REQUEST) return@OnActivityResult
-      val promise = pendingScan ?: return@OnActivityResult
+      val pages = if (payload.resultCode == Activity.RESULT_OK)
+        GmsDocumentScanningResult.fromActivityResultIntent(payload.data)?.pages?.map { it.imageUri.toString() } ?: emptyList()
+      else emptyList()
+      val promise = pendingScan
       pendingScan = null
-      if (payload.resultCode != Activity.RESULT_OK) return@OnActivityResult promise.resolve(emptyList<String>())
-      val result = GmsDocumentScanningResult.fromActivityResultIntent(payload.data)
-      promise.resolve(result?.pages?.map { it.imageUri.toString() } ?: emptyList<String>())
-    }
-
-    /** On-device OCR. Works offline; the model ships inside the APK. */
-    AsyncFunction("recognize") { uri: String ->
-      try {
-        val image = InputImage.fromFilePath(context, Uri.parse(uri))
-        Tasks.await(recognizer.process(image)).text
-      } catch (e: MlKitException) {
-        throw PaperworkError("Text recognition failed on this page.", e)
+      if (promise != null) {
+        promise.resolve(pages)
+      } else if (pages.isNotEmpty()) {
+        // The app was killed while the camera was open: keep the result for the next launch.
+        prefs().edit().putString("pendingScan", JSONArray(pages).toString()).apply()
       }
     }
 
-    /** Encrypt a page into private storage. Returns the stored size in bytes. */
-    AsyncFunction("importPage") { sourceUri: String, relativeName: String ->
-      val bytes = Vault.readSource(context, sourceUri)
-      Vault.encrypt(context, bytes, relativeName).length().toDouble()
+    Function("hasPendingScan") { prefs().contains("pendingScan") }
+
+    /** Pages from a scan that finished after Android restarted the app. Returned once. */
+    Function("takePendingScan") {
+      val json = prefs().getString("pendingScan", null) ?: return@Function emptyList<String>()
+      prefs().edit().remove("pendingScan").apply()
+      val array = try { JSONArray(json) } catch (e: Exception) { JSONArray() }
+      (0 until array.length()).map { array.optString(it) }.filter { uri ->
+        val path = Uri.parse(uri).path
+        path == null || File(path).exists()
+      }
     }
 
-    /** Decrypt a page to a short-lived cache file for display or sharing. */
+    /**
+     * One page end to end: decode at a bounded size (upright), read its text, store an encrypted
+     * page and thumbnail, then delete the plaintext source if it is in our cache.
+     */
+    AsyncFunction("importPage") { sourceUri: String, baseName: String ->
+      val bitmap = try {
+        Pages.decode(context, sourceUri, Pages.PAGE_MAX_SIDE)
+      } catch (e: OutOfMemoryError) {
+        throw PaperworkError("This image is too large to process.")
+      }
+      try {
+        val text = try {
+          Tasks.await(recognizer.process(InputImage.fromBitmap(bitmap, 0))).text
+        } catch (e: Exception) {
+          ""
+        }
+        val page = Vault.encrypt(context, Pages.jpeg(bitmap, 85), "$baseName.jpg")
+        val thumb = Pages.scaleDown(bitmap.copy(bitmap.config ?: android.graphics.Bitmap.Config.ARGB_8888, false), Pages.THUMB_MAX_SIDE)
+        Vault.encrypt(context, Pages.jpeg(thumb, 75), "$baseName.thumb.jpg")
+        thumb.recycle()
+        Pages.deleteIfOurCache(context, sourceUri)
+        mapOf("name" to "$baseName.jpg", "thumb" to "$baseName.thumb.jpg", "text" to text, "bytes" to page.length().toDouble())
+      } finally {
+        bitmap.recycle()
+      }
+    }
+
+    /** Remove a plaintext source without importing it (cancelled review, recovered scan discarded). */
+    Function("discardSource") { uri: String -> Pages.deleteIfOurCache(context, uri) }
+
+    /** Decrypt a page to a short-lived cache file for display. Written atomically under a unique name. */
     AsyncFunction("openPage") { relativeName: String ->
-      val target = File(Vault.plainCacheDir(context), relativeName.replace('/', '_'))
-      if (!target.exists()) target.writeBytes(Vault.decrypt(context, relativeName))
+      val target = File(Vault.plainDir(context), relativeName.replace('/', '_'))
+      if (!target.exists()) {
+        val temp = File.createTempFile("page", ".tmp", Vault.plainDir(context))
+        temp.writeBytes(Vault.decrypt(context, relativeName))
+        if (!temp.renameTo(target)) temp.delete()
+      }
       Uri.fromFile(target).toString()
     }
 
-    Function("clearPlainCache") { Vault.clearPlainCache(context) }
+    Function("clearPlainCache") { Vault.clearPlain(context) }
 
-    AsyncFunction("deletePages") { relativeNames: List<String> ->
-      for (name in relativeNames) {
-        runCatching { Vault.resolve(context, name).delete() }
-        runCatching { File(Vault.plainCacheDir(context), name.replace('/', '_')).delete() }
-      }
+    Function("sweepCaches") { Vault.sweepCaches(context) }
+
+    AsyncFunction("sweepOrphans") { keepDocIds: List<String> -> Vault.sweepOrphans(context, keepDocIds.toSet()) }
+
+    AsyncFunction("deleteDocumentFiles") { docId: String ->
+      if (docId.matches(Regex("^[A-Za-z0-9-]+$"))) File(Vault.root(context), docId).deleteRecursively()
     }
 
-    /** Builds a PDF, one page per image, scaled to fit A4 at about 150 dpi. Returns a file URI in the cache. */
+    AsyncFunction("wipeVault") { Vault.wipe(context) }
+
+    /** Copy one decrypted page out for sharing. */
+    AsyncFunction("exportPage") { relativeName: String, fileName: String ->
+      val out = File(Vault.exportDir(context), "${sanitize(fileName)}.jpg")
+      out.writeBytes(Vault.decrypt(context, relativeName))
+      Uri.fromFile(out).toString()
+    }
+
+    /** One page per image on an A4 canvas at about 150 dpi. Pages are drawn one at a time to bound memory. */
     AsyncFunction("exportPdf") { relativeNames: List<String>, fileName: String ->
       if (relativeNames.isEmpty()) throw PaperworkError("This document has no pages.")
       val pdf = PdfDocument()
       try {
         relativeNames.forEachIndexed { index, name ->
-          val bitmap = decodeBounded(Vault.decrypt(context, name), 1800)
-          // A4 is 595 x 842 points; keep the image's aspect ratio inside it.
+          val plain = Vault.decrypt(context, name)
+          val decoded = android.graphics.BitmapFactory.decodeByteArray(plain, 0, plain.size) ?: throw PaperworkError("A page could not be read.")
+          val bitmap = Pages.scaleDown(decoded, 1240)
           val landscape = bitmap.width > bitmap.height
           val pageW = if (landscape) 842 else 595
           val pageH = if (landscape) 595 else 842
@@ -136,12 +177,20 @@ class PaperworkNativeModule : Module() {
           pdf.finishPage(page)
           bitmap.recycle()
         }
-        val safe = fileName.replace(Regex("[^A-Za-z0-9 ._-]"), "").trim().ifEmpty { "Document" }.take(80)
-        val out = File(Vault.plainCacheDir(context), "$safe.pdf")
+        val out = File(Vault.exportDir(context), "${sanitize(fileName)}.pdf")
         FileOutputStream(out).use { pdf.writeTo(it) }
         Uri.fromFile(out).toString()
       } finally {
         pdf.close()
+      }
+    }
+
+    /** Keep documents out of screenshots and the recent-apps thumbnail. */
+    Function("setSecure") { secure: Boolean ->
+      val activity = appContext.currentActivity ?: return@Function
+      activity.runOnUiThread {
+        if (secure) activity.window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        else activity.window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
       }
     }
 

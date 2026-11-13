@@ -1,29 +1,68 @@
-import { ErrorBoundary, ThemeProvider, ToastProvider, useBasaltFonts, useTheme } from '@basalt/core';
+import { ErrorBoundary, Onboarding, ThemeProvider, ToastProvider, useBasaltFonts, useTheme } from '@basalt/core';
+import { LockGate, useLock } from '@basalt/core/src/lock/LockGate';
 import * as Notifications from 'expo-notifications';
 import { router } from 'expo-router';
 import { Stack } from 'expo-router/stack';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
+import { BellRing, FileScan, ScanText, ShieldCheck } from 'lucide-react-native';
 import React, { useEffect } from 'react';
 import { AppState } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
-import { LockGate } from '../components/LockGate';
 import { Native } from '../lib/capture';
+import { allDocumentIds } from '../lib/db';
 import { setupNotifications } from '../lib/reminders';
-import { ACCENT } from '../lib/settings';
+import { ACCENT, lockSetting, onboardedSetting } from '../lib/settings';
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
 setupNotifications();
 
+const PAGES = [
+  { icon: FileScan, title: 'Scan anything', body: 'Bills, receipts, ID cards, warranties and prescriptions. Edges, perspective and glare are fixed for you.' },
+  { icon: ScanText, title: 'Read on the phone', body: 'Text is recognised on this device. Paperwork finds expiry, due and warranty dates, totals and the document type.' },
+  { icon: BellRing, title: 'Never miss a date', body: 'Get a heads-up before a card expires, a bill is due or a warranty ends. Tap the reminder to open the document.' },
+  { icon: ShieldCheck, title: 'Locked down', body: 'Pages are encrypted with a hardware-backed key, the database with SQLCipher. Nothing is uploaded, ever.' },
+];
+
+function openDocFromUrl(url: unknown) {
+  const match = typeof url === 'string' ? /^paperwork:\/\/doc\/([\w-]+)$/.exec(url) : null;
+  if (match) router.push({ pathname: '/doc/[id]', params: { id: match[1] } });
+}
+
 function Navigator() {
   const { colors, scheme } = useTheme();
+  const lock = useLock();
+  const [onboarded, setOnboarded] = onboardedSetting.use();
+  const [locked] = lockSetting.use();
+
+  useEffect(() => {
+    try {
+      Native.setSecure(locked);
+    } catch {
+      // Older native build.
+    }
+  }, [locked]);
+
+  useEffect(() => {
+    // Tapping a reminder opens its document, after unlocking if the lock is on.
+    const tap = Notifications.addNotificationResponseReceivedListener((response) => {
+      lock.whenUnlocked(() => openDocFromUrl(response.notification.request.content.data?.url));
+    });
+    const cold = Notifications.getLastNotificationResponse();
+    if (cold) {
+      lock.whenUnlocked(() => openDocFromUrl(cold.notification.request.content.data?.url));
+      Notifications.clearLastNotificationResponse();
+    }
+    return () => tap.remove();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  if (!onboarded) return <Onboarding appName="Paperwork" pages={PAGES} onDone={() => setOnboarded(true)} />;
   return (
     <>
       <StatusBar style={scheme === 'dark' ? 'light' : 'dark'} />
-      <LockGate>
-        <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.bg }, animation: 'slide_from_right' }} />
-      </LockGate>
+      <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.bg }, animation: 'slide_from_right' }} />
     </>
   );
 }
@@ -32,7 +71,16 @@ export default function RootLayout() {
   const fontsReady = useBasaltFonts();
 
   useEffect(() => {
-    // Decrypted page images only live while the app is in use.
+    // Start clean: no plaintext previews, exports or scanner leftovers from the last session,
+    // and no encrypted pages that belong to no document.
+    try {
+      Native.sweepCaches();
+    } catch {
+      // Ignore.
+    }
+    allDocumentIds()
+      .then((ids) => Native.sweepOrphans(ids))
+      .catch(() => {});
     const sub = AppState.addEventListener('change', (state) => {
       if (state === 'background') {
         try {
@@ -42,16 +90,7 @@ export default function RootLayout() {
         }
       }
     });
-    // Tapping a reminder opens its document.
-    const tap = Notifications.addNotificationResponseReceivedListener((response) => {
-      const url = response.notification.request.content.data?.url;
-      const match = typeof url === 'string' ? /^paperwork:\/\/doc\/([\w-]+)$/.exec(url) : null;
-      if (match) router.push({ pathname: '/doc/[id]', params: { id: match[1] } });
-    });
-    return () => {
-      sub.remove();
-      tap.remove();
-    };
+    return () => sub.remove();
   }, []);
 
   useEffect(() => {
@@ -66,7 +105,9 @@ export default function RootLayout() {
         <SafeAreaProvider>
           <ThemeProvider accent={ACCENT}>
             <ToastProvider>
-              <Navigator />
+              <LockGate setting={lockSetting} appName="Paperwork" message="Your documents stay hidden until you unlock.">
+                <Navigator />
+              </LockGate>
             </ToastProvider>
           </ThemeProvider>
         </SafeAreaProvider>

@@ -43,6 +43,12 @@ export async function scheduleFor(docTitle: string, kind: DateKind, iso: string,
   return ids;
 }
 
+/** Cancel the old reminders for a date and schedule fresh ones, e.g. after a title change. */
+export async function reschedule(oldIds: string[], docTitle: string, kind: DateKind, iso: string, leadDays: number, docId: string): Promise<string[]> {
+  await cancelAll(oldIds);
+  return scheduleFor(docTitle, kind, iso, leadDays, docId);
+}
+
 export async function cancelAll(ids: string[]): Promise<void> {
   await Promise.all(ids.map((id) => Notifications.cancelScheduledNotificationAsync(id).catch(() => {})));
 }

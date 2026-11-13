@@ -37,6 +37,10 @@ export function DateEditor({ value, onChange, onRemove, editableKind = true }: {
         ))}
         {onRemove ? <Chip label="Remove" tone="danger" onPress={onRemove} /> : null}
       </View>
+      ) : onRemove ? (
+        <View style={{ flexDirection: 'row' }}>
+          <Chip label="Remove" tone="danger" onPress={onRemove} />
+        </View>
       ) : null}
     </View>
   );

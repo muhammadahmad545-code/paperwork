@@ -114,8 +114,10 @@ function contextBefore(text: string, index: number): string {
 }
 
 function kindOf(context: string): DateKind | 'birth' {
-  if (BIRTH.test(context)) return 'birth';
-  let best: { kind: DateKind; at: number } | null = null;
+  let best: { kind: DateKind | 'birth'; at: number } | null = null;
+  const births = [...context.matchAll(new RegExp(BIRTH.source, 'gi'))];
+  const lastBirth = births[births.length - 1];
+  if (lastBirth) best = { kind: 'birth', at: lastBirth.index ?? 0 };
   for (const [kind, re] of KIND_WORDS) {
     // The keyword closest to the date wins: "Issued 01/01/2026 Expires 01/01/2031".
     const all = [...context.matchAll(new RegExp(re.source, 'gi'))];
@@ -158,7 +160,8 @@ export function findDates(text: string): DetectedDate[] {
 }
 
 const CURRENCY = '(rs\\.?|pkr|usd|\\$|aed|sar|eur|€|gbp|£)';
-const TOTAL_WORDS = /(grand\s+total|net\s+payable|amount\s+payable|amount\s+due|payable\s+within\s+due\s+date|total\s+amount|total\s+due|balance\s+due|total)/i;
+const TOTAL_WORDS = /\b(grand\s+total|net\s+payable|amount\s+payable|amount\s+due|payable\s+within\s+due\s+date|total\s+amount|total\s+due|balance\s+due|total)\b(?!\s*(items?|qty|quantity|units?|savings?|discount|tax|weight|kwh|pieces|pcs)\b)/i;
+const SUBTOTAL = /\b(sub\s*-?\s*total)\b/i;
 
 export function findAmount(text: string): Amount | null {
   const lines = text.split('\n');
@@ -166,10 +169,15 @@ export function findAmount(text: string): Amount | null {
   let bestScore = -1;
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
+    if (SUBTOTAL.test(line)) continue;
     const label = TOTAL_WORDS.exec(line);
     if (!label) continue;
-    // The figure is on the same line, or on the next line in two-column layouts.
-    const search = `${line.slice(label.index + label[0].length)} ${lines[i + 1] ?? ''}`;
+    // The figure is on the same line, or on the next line in two-column layouts. Dates are blanked
+    // out first so "Amount due 15-11-2026" never reads as 15.
+    const raw = `${line.slice(label.index + label[0].length)} ${lines[i + 1] ?? ''}`;
+    const search = raw
+      .replace(/\b\d{1,4}[-/.]\d{1,2}[-/.]\d{2,4}\b/g, ' ')
+      .replace(new RegExp(`\\b\\d{1,2}(?:st|nd|rd|th)?[\\s-]*${MONTH_RE}[\\s,.-]*\\d{2,4}\\b`, 'gi'), ' ');
     const re = new RegExp(`${CURRENCY}?\\s*([0-9]{1,3}(?:,[0-9]{3})+|[0-9]+)(\\.[0-9]{1,2})?\\s*${CURRENCY}?`, 'i');
     const m = re.exec(search);
     if (!m) continue;
@@ -178,7 +186,8 @@ export function findAmount(text: string): Amount | null {
     const currencyRaw = (m[1] ?? m[4] ?? '').toLowerCase();
     const currency = currencyRaw.startsWith('rs') || currencyRaw === 'pkr' ? 'PKR' : currencyRaw === '$' || currencyRaw === 'usd' ? 'USD' : currencyRaw === '€' || currencyRaw === 'eur' ? 'EUR' : currencyRaw === '£' || currencyRaw === 'gbp' ? 'GBP' : currencyRaw.toUpperCase();
     // "Grand total" beats "subtotal"-like plain "total"; later lines usually hold the final figure.
-    const score = (/grand|net|payable|due|balance/i.test(label[0]) ? 2 : 1) * 1000 + i;
+    const hasCurrency = Boolean(m[1] || m[4]);
+    const score = (/grand|net|payable|due|balance/i.test(label[0]) ? 2 : 1) * 1000 + (hasCurrency ? 500 : 0) + i;
     if (score > bestScore) {
       bestScore = score;
       best = { value, currency, raw: m[0].trim() };

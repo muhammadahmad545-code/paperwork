@@ -1,7 +1,6 @@
 package expo.modules.paperworknative
 
 import android.content.Context
-import android.net.Uri
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import java.io.File
@@ -14,6 +13,7 @@ import javax.crypto.spec.GCMParameterSpec
 /**
  * Encrypts document images at rest with an AES-256-GCM key that lives in the Android Keystore
  * (hardware-backed on most phones) and can never be exported. File format: IV (12) || ciphertext+tag.
+ * Pages are re-encoded to about 1 MB before encryption, so whole-file operations stay small.
  */
 object Vault {
   private const val ALIAS = "paperwork_files_v1"
@@ -35,19 +35,15 @@ object Vault {
 
   private val SAFE_NAME = Regex("^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$")
 
+  fun root(context: Context): File = File(context.filesDir, "vault")
+
   /** Resolve a relative name inside the private documents folder, refusing anything that could escape it. */
   fun resolve(context: Context, relative: String): File {
     require(SAFE_NAME.matches(relative) && !relative.contains("..")) { "Invalid file name." }
-    return File(File(context.filesDir, "vault"), relative)
+    return File(root(context), relative)
   }
 
-  fun readSource(context: Context, uri: String): ByteArray {
-    val parsed = Uri.parse(uri)
-    val stream = if (parsed.scheme == null || parsed.scheme == "file") File(parsed.path ?: uri).inputStream()
-      else context.contentResolver.openInputStream(parsed) ?: throw IllegalStateException("Could not open the scanned page.")
-    return stream.use { it.readBytes() }
-  }
-
+  /** Writes atomically: a crash mid-write never leaves a half-written page behind. */
   fun encrypt(context: Context, plain: ByteArray, relative: String): File {
     val cipher = Cipher.getInstance("AES/GCM/NoPadding")
     cipher.init(Cipher.ENCRYPT_MODE, key())
@@ -71,9 +67,43 @@ object Vault {
     return cipher.doFinal(sealed, IV_BYTES, sealed.size - IV_BYTES)
   }
 
-  fun plainCacheDir(context: Context): File = File(context.cacheDir, "plain").apply { mkdirs() }
+  /** Short-lived decrypted copies for display. Wiped when the app goes to the background and on launch. */
+  fun plainDir(context: Context): File = File(context.cacheDir, "plain").apply { mkdirs() }
 
-  fun clearPlainCache(context: Context) {
-    plainCacheDir(context).listFiles()?.forEach { it.deleteRecursively() }
+  /** Exports handed to other apps (PDF, page images). Kept until the next launch so sharing can finish. */
+  fun exportDir(context: Context): File = File(context.cacheDir, "export").apply { mkdirs() }
+
+  fun clearPlain(context: Context) {
+    plainDir(context).listFiles()?.forEach { it.deleteRecursively() }
+  }
+
+  /**
+   * Launch-time cleanup: decrypted previews, old exports, and the plaintext copies the scanner and
+   * file picker leave in the cache. None of these should outlive a session.
+   */
+  fun sweepCaches(context: Context) {
+    clearPlain(context)
+    exportDir(context).listFiles()?.forEach { it.deleteRecursively() }
+    context.cacheDir.listFiles()?.forEach { f ->
+      val n = f.name.lowercase()
+      if (n.contains("docscan") || n.contains("mlkit") || n == "documentpicker" || n == "imagepicker") f.deleteRecursively()
+    }
+  }
+
+  /** Deletes vault folders that no document references, e.g. after an interrupted scan. */
+  fun sweepOrphans(context: Context, keepDocIds: Set<String>): Int {
+    var removed = 0
+    root(context).listFiles()?.forEach { dir ->
+      if (dir.isDirectory && dir.name !in keepDocIds) {
+        dir.deleteRecursively()
+        removed++
+      }
+    }
+    return removed
+  }
+
+  fun wipe(context: Context) {
+    root(context).deleteRecursively()
+    clearPlain(context)
   }
 }

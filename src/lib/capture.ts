@@ -1,45 +1,53 @@
 import Native from '../../modules/paperwork-native';
+import type { PageRow } from './db';
+import { newId } from './db';
 import { analyze } from './extract';
 import type { Analysis } from './extract';
-import { newId } from './db';
 
 export interface Captured {
   docId: string;
-  pages: string[];
+  pages: PageRow[];
   text: string;
   analysis: Analysis;
 }
 
-export type Step = { stage: 'reading'; page: number; total: number } | { stage: 'securing'; page: number; total: number };
+export interface Step {
+  page: number;
+  total: number;
+}
 
 /**
- * For each page: read its text on the device, then encrypt the image into private storage.
- * If anything fails, pages already stored for this document are removed again.
+ * For each page: decode it at a safe size, read its text on the device, encrypt the page and a
+ * thumbnail into private storage, and delete the plaintext source. If anything fails, or the
+ * caller cancels, everything stored for this document is removed again.
  */
-export async function processPages(sources: string[], onStep: (step: Step) => void): Promise<Captured> {
+export async function processPages(sources: string[], onStep: (step: Step) => void, isCancelled: () => boolean): Promise<Captured | null> {
   const docId = newId();
-  const stored: string[] = [];
+  const pages: PageRow[] = [];
   const texts: string[] = [];
   try {
     for (let i = 0; i < sources.length; i++) {
-      onStep({ stage: 'reading', page: i + 1, total: sources.length });
-      try {
-        texts.push(await Native.recognize(sources[i]));
-      } catch {
-        // A page with no readable text is still worth keeping.
-        texts.push('');
-      }
-      onStep({ stage: 'securing', page: i + 1, total: sources.length });
-      const name = `${docId}/page-${i + 1}.jpg`;
-      await Native.importPage(sources[i], name);
-      stored.push(name);
+      if (isCancelled()) throw new Error('cancelled');
+      onStep({ page: i + 1, total: sources.length });
+      const page = await Native.importPage(sources[i], `${docId}/page-${i + 1}`);
+      pages.push({ name: page.name, thumb: page.thumb });
+      texts.push(page.text);
     }
+    if (isCancelled()) throw new Error('cancelled');
   } catch (error) {
-    await Native.deletePages(stored).catch(() => {});
+    await Native.deleteDocumentFiles(docId).catch(() => {});
+    sources.forEach((s) => {
+      try {
+        Native.discardSource(s);
+      } catch {
+        // Best effort.
+      }
+    });
+    if (isCancelled()) return null;
     throw error;
   }
   const text = texts.join('\n\n').trim();
-  return { docId, pages: stored, text, analysis: analyze(text) };
+  return { docId, pages, text, analysis: analyze(text) };
 }
 
 export { Native };

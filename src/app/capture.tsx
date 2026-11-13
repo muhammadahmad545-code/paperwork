@@ -1,4 +1,5 @@
-import { Button, Card, Chip, Header, ProgressBar, Screen, SectionTitle, Text, TextField, toMessage, useTheme, useToast } from '@basalt/core';
+import { Appear, Aurora, Button, Card, Chip, Header, ProgressBar, Ring, Screen, SectionTitle, Text, TextField, toMessage, useTheme, useToast } from '@basalt/core';
+import { useLock } from '@basalt/core/src/lock/LockGate';
 import * as DocumentPicker from 'expo-document-picker';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { FileScan, Images, ShieldCheck } from 'lucide-react-native';
@@ -9,18 +10,19 @@ import type { EditableDate } from '../components/DateEditor';
 import { PageImage } from '../components/PageImage';
 import { Native, processPages } from '../lib/capture';
 import type { Captured, Step } from '../lib/capture';
-import { insertDocument, newId } from '../lib/db';
+import { insertDocument, newId, setDateReminders } from '../lib/db';
 import { TYPE_LABELS } from '../lib/extract';
 import type { DocType } from '../lib/extract';
-import { ensurePermission, scheduleFor } from '../lib/reminders';
+import { cancelAll, ensurePermission, scheduleFor } from '../lib/reminders';
 import { leadDaysSetting } from '../lib/settings';
 
 type Phase = { name: 'picking' } | { name: 'working'; step: Step | null } | { name: 'review'; captured: Captured } | { name: 'error'; message: string; canImport: boolean };
 
 export default function Capture() {
-  const { spacing } = useTheme();
+  const { colors, spacing } = useTheme();
   const router = useRouter();
   const toast = useToast();
+  const lock = useLock();
   const { mode } = useLocalSearchParams<{ mode?: string }>();
   const [phase, setPhase] = useState<Phase>({ name: 'picking' });
   const [title, setTitle] = useState('');
@@ -29,64 +31,75 @@ export default function Capture() {
   const [dates, setDates] = useState<EditableDate[]>([]);
   const [saving, setSaving] = useState(false);
   const saved = useRef(false);
+  const saveLock = useRef(false);
+  const alive = useRef(true);
   const capturedRef = useRef<Captured | null>(null);
 
-  const run = useCallback(async (source: 'scan' | 'import') => {
-    setPhase({ name: 'picking' });
-    let uris: string[] = [];
-    try {
-      if (source === 'scan') {
-        uris = await Native.scan(20);
-      } else {
-        const result = await DocumentPicker.getDocumentAsync({ type: 'image/*', multiple: true, copyToCacheDirectory: true });
-        uris = result.canceled ? [] : result.assets.map((a) => a.uri);
+  const run = useCallback(
+    async (source: 'scan' | 'import' | 'recover') => {
+      setPhase({ name: 'picking' });
+      let uris: string[] = [];
+      try {
+        if (source === 'recover') {
+          uris = Native.takePendingScan();
+        } else if (source === 'scan') {
+          lock.expectExternal();
+          uris = await Native.scan(20);
+        } else {
+          lock.expectExternal();
+          // No cache copy: the native side reads content:// directly, so no plaintext duplicate is made.
+          const result = await DocumentPicker.getDocumentAsync({ type: 'image/*', multiple: true, copyToCacheDirectory: false });
+          uris = result.canceled ? [] : result.assets.map((a) => a.uri);
+        }
+      } catch (error) {
+        if (alive.current) setPhase({ name: 'error', message: toMessage(error, 'Could not open the scanner.'), canImport: source === 'scan' });
+        return;
       }
-    } catch (error) {
-      setPhase({ name: 'error', message: toMessage(error, 'Could not open the scanner.'), canImport: source === 'scan' });
-      return;
-    }
-    if (uris.length === 0) {
-      router.back();
-      return;
-    }
-    setPhase({ name: 'working', step: null });
-    try {
-      const captured = await processPages(uris, (step) => setPhase({ name: 'working', step }));
-      capturedRef.current = captured;
-      const a = captured.analysis;
-      setTitle(a.title);
-      setType(a.type);
-      setDates(a.dates.map((d) => ({ id: newId(), kind: d.kind, iso: d.iso, label: d.kind === 'warranty' ? d.raw : '', remind: ['expiry', 'due', 'warranty'].includes(d.kind) })));
-      setPhase({ name: 'review', captured });
-    } catch (error) {
-      setPhase({ name: 'error', message: toMessage(error, 'Could not process the pages.'), canImport: false });
-    }
-  }, [router]);
+      if (!alive.current) {
+        uris.forEach((u) => Native.discardSource(u));
+        return;
+      }
+      if (uris.length === 0) {
+        router.back();
+        return;
+      }
+      setPhase({ name: 'working', step: null });
+      try {
+        const captured = await processPages(uris, (step) => alive.current && setPhase({ name: 'working', step }), () => !alive.current);
+        if (!captured) return;
+        capturedRef.current = captured;
+        const a = captured.analysis;
+        setTitle(a.title);
+        setType(a.type);
+        setDates(a.dates.map((d) => ({ id: newId(), kind: d.kind, iso: d.iso, label: d.kind === 'warranty' ? d.raw : '', remind: ['expiry', 'due', 'warranty'].includes(d.kind) })));
+        setPhase({ name: 'review', captured });
+      } catch (error) {
+        if (alive.current) setPhase({ name: 'error', message: toMessage(error, 'Could not process the pages.'), canImport: false });
+      }
+    },
+    [router, lock],
+  );
 
   useEffect(() => {
-    void run(mode === 'import' ? 'import' : 'scan');
+    void run(mode === 'import' ? 'import' : mode === 'recover' ? 'recover' : 'scan');
   }, [mode, run]);
 
-  // Leaving without saving must not leave encrypted pages behind.
+  // Leaving without saving removes the encrypted pages; leaving mid-processing stops it and cleans up.
   useEffect(
     () => () => {
+      alive.current = false;
       const c = capturedRef.current;
-      if (c && !saved.current) Native.deletePages(c.pages).catch(() => {});
+      if (c && !saved.current) Native.deleteDocumentFiles(c.docId).catch(() => {});
     },
     [],
   );
 
   const save = async (captured: Captured) => {
+    if (saveLock.current) return;
     if (!title.trim()) return toast('Give the document a title.', 'danger');
+    saveLock.current = true;
     setSaving(true);
     try {
-      const lead = leadDaysSetting.get();
-      const wantsReminders = dates.some((d) => d.remind);
-      const allowed = wantsReminders ? await ensurePermission() : false;
-      if (wantsReminders && !allowed) toast('Notifications are off, so reminders were not scheduled.', 'danger');
-      const withReminders = await Promise.all(
-        dates.map(async (d) => ({ ...d, reminderIds: d.remind && allowed ? await scheduleFor(title.trim(), d.kind, d.iso, lead, captured.docId) : [] })),
-      );
       await insertDocument({
         id: captured.docId,
         title: title.trim(),
@@ -96,12 +109,29 @@ export default function Capture() {
         amount: captured.analysis.amount?.value ?? null,
         currency: captured.analysis.amount?.currency ?? null,
         pages: captured.pages,
-        dates: withReminders,
+        dates,
       });
       saved.current = true;
+      // Reminders only after the document exists, so they can never point at nothing.
+      const wanted = dates.filter((d) => d.remind);
+      if (wanted.length > 0) {
+        if (await ensurePermission()) {
+          for (const d of wanted) {
+            const ids = await scheduleFor(title.trim(), d.kind, d.iso, leadDaysSetting.get(), captured.docId);
+            try {
+              await setDateReminders(d.id, true, ids);
+            } catch {
+              await cancelAll(ids);
+            }
+          }
+        } else {
+          toast('Saved. Notifications are off, so no reminders were set.', 'danger');
+        }
+      }
       toast('Saved and encrypted', 'success');
       router.replace({ pathname: '/doc/[id]', params: { id: captured.docId } });
     } catch (error) {
+      saveLock.current = false;
       toast(toMessage(error, 'Could not save the document.'), 'danger');
     } finally {
       setSaving(false);
@@ -110,24 +140,30 @@ export default function Capture() {
 
   if (phase.name === 'picking' || phase.name === 'working') {
     const step = phase.name === 'working' ? phase.step : null;
-    const progress = step ? (step.page - (step.stage === 'reading' ? 1 : 0.5)) / step.total : 0;
+    const progress = step ? (step.page - 0.5) / step.total : 0;
     return (
-      <Screen>
-        <Header title={mode === 'import' ? 'Import' : 'Scan'} onBack={() => router.back()} />
-        <Card style={{ gap: spacing.md, paddingVertical: spacing.xl }}>
-          <Text variant="heading">{step ? (step.stage === 'reading' ? `Reading page ${step.page} of ${step.total}` : `Encrypting page ${step.page} of ${step.total}`) : 'Waiting for pages…'}</Text>
-          <ProgressBar progress={progress} />
-          <Text variant="caption" color="textMuted">
-            Text recognition runs on this phone. Pages are encrypted with a key that never leaves it.
-          </Text>
-        </Card>
+      <Screen aurora contentStyle={{ flexGrow: 1 }}>
+        <Header title={mode === 'import' ? 'Import' : mode === 'recover' ? 'Finishing your scan' : 'Scan'} onBack={() => router.back()} />
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', gap: spacing.xl, paddingVertical: spacing.xxxl }}>
+          <Ring progress={progress} size={168} stroke={14}>
+            <Text variant="display">{step ? `${step.page}/${step.total}` : '…'}</Text>
+          </Ring>
+          <View style={{ gap: spacing.sm, alignItems: 'center' }}>
+            <Text variant="heading" align="center">
+              {step ? `Reading and encrypting page ${step.page}` : 'Waiting for pages'}
+            </Text>
+            <Text variant="caption" color="textMuted" align="center">
+              Text recognition runs on this phone. Pages are encrypted with a key that never leaves it, and the unencrypted copies are deleted.
+            </Text>
+          </View>
+        </View>
       </Screen>
     );
   }
 
   if (phase.name === 'error') {
     return (
-      <Screen>
+      <Screen aurora>
         <Header title="Something went wrong" onBack={() => router.back()} />
         <Card style={{ gap: spacing.md }}>
           <Text color="textMuted">{phase.message}</Text>
@@ -140,12 +176,15 @@ export default function Capture() {
 
   const { captured } = phase;
   const a = captured.analysis;
+  const words = captured.text ? captured.text.split(/\s+/).length : 0;
   return (
-    <Screen footer={<Button label="Save document" icon={ShieldCheck} size="lg" loading={saving} onPress={() => void save(captured)} />}>
-      <Header title="Review" subtitle={`${captured.pages.length} page${captured.pages.length === 1 ? '' : 's'} · ${captured.text.length ? `${captured.text.split(/\s+/).length} words read` : 'no text found'}`} onBack={() => router.back()} />
+    <Screen aurora footer={<Button label="Save document" icon={ShieldCheck} size="lg" loading={saving} onPress={() => void save(captured)} />}>
+      <Header title="Review" subtitle={`${captured.pages.length} page${captured.pages.length === 1 ? '' : 's'} · ${words ? `${words} words read` : 'no text found'}`} onBack={() => router.back()} />
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: spacing.sm }}>
-        {captured.pages.map((p) => (
-          <PageImage key={p} name={p} style={{ width: 120, height: 160, borderRadius: 12 }} />
+        {captured.pages.map((p, i) => (
+          <Appear key={p.name} index={i}>
+            <PageImage name={p.thumb} style={{ width: 132, height: 176, borderRadius: 14 }} />
+          </Appear>
         ))}
       </ScrollView>
       <TextField label="Title" value={title} onChangeText={setTitle} maxLength={80} />
@@ -156,11 +195,11 @@ export default function Capture() {
         ))}
       </View>
       {a.amount ? (
-        <Card>
+        <Card variant="glow">
           <Text variant="caption" color="textMuted">
             Total found
           </Text>
-          <Text variant="title">
+          <Text variant="display" style={{ color: colors.accent }}>
             {a.amount.currency} {a.amount.value.toLocaleString()}
           </Text>
         </Card>
@@ -168,7 +207,7 @@ export default function Capture() {
       <SectionTitle title={`Dates found · ${dates.length}`} />
       {dates.length === 0 ? (
         <Text variant="caption" color="textMuted">
-          No dates were found in the text. You can still save the document.
+          No dates were found. You can add one from the document page after saving.
         </Text>
       ) : (
         <Card style={{ paddingVertical: spacing.xs }}>
