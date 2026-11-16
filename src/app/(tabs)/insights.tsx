@@ -1,6 +1,6 @@
 import { Appear, Bars, Card, EmptyState, Hero, Screen, SectionTitle, StatTile, TAB_BAR_SPACE, Text, useTheme } from '@basalt/core';
 import { useFocusEffect } from 'expo-router';
-import { BarChart3 } from 'lucide-react-native';
+import BarChart3 from 'lucide-react-native/icons/chart-column';
 import React, { useCallback, useState } from 'react';
 import { View } from 'react-native';
 import { insights } from '../../lib/db';

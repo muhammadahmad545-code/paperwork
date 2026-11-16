@@ -2,7 +2,9 @@ import { Appear, Aurora, Button, Card, Chip, Header, ProgressBar, Ring, Screen, 
 import { useLock } from '@basalt/core/src/lock/LockGate';
 import * as DocumentPicker from 'expo-document-picker';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { FileScan, Images, ShieldCheck } from 'lucide-react-native';
+import FileScan from 'lucide-react-native/icons/file-scan';
+import Images from 'lucide-react-native/icons/images';
+import ShieldCheck from 'lucide-react-native/icons/shield-check';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ScrollView, View } from 'react-native';
 import { DateEditor } from '../components/DateEditor';

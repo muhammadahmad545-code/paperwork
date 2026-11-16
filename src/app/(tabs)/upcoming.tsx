@@ -1,6 +1,7 @@
 import { Appear, Badge, Card, EmptyState, Hero, Ring, Screen, SectionTitle, TAB_BAR_SPACE, Text, useTheme } from '@basalt/core';
 import { useFocusEffect, useRouter } from 'expo-router';
-import { Bell, CalendarClock } from 'lucide-react-native';
+import Bell from 'lucide-react-native/icons/bell';
+import CalendarClock from 'lucide-react-native/icons/calendar-clock';
 import React, { useCallback, useState } from 'react';
 import { View } from 'react-native';
 import { allDates } from '../../lib/db';

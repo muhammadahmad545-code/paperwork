@@ -1,5 +1,5 @@
 import { useTheme } from '@basalt/core';
-import { FileText } from 'lucide-react-native';
+import FileText from 'lucide-react-native/icons/file-text';
 import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, Image, View } from 'react-native';
 import type { ImageStyle, StyleProp } from 'react-native';

@@ -46,7 +46,10 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     'expo-font',
     ['expo-splash-screen', { backgroundColor: '#0B0D10', image: './assets/splash-icon.png', imageWidth: 160 }],
     ['expo-local-authentication', { faceIDPermission: false }],
+    // Compress native libraries inside the APK: a much smaller download.
+    ['expo-build-properties', { android: { useLegacyPackaging: true } }],
     './plugins/withReleaseSigning',
+    './plugins/withAbiSplits',
   ],
   experiments: { typedRoutes: true },
 });

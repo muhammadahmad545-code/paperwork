@@ -4,6 +4,8 @@ Scan bills, receipts, ID cards, warranties and prescriptions. Paperwork reads th
 
 **[Download the latest APK](https://github.com/muhammadahmad545-code/paperwork/releases/latest)**
 
+Pick the file ending in **`-arm64-v8a.apk`**: that is the right one for almost every phone from the last several years. `-armeabi-v7a.apk` is for older 32-bit phones and `-x86_64.apk` for emulators and Chromebooks. Installed apps update themselves to the matching file.
+
 ## What's new in 1.1
 
 - **Saving works reliably.** Version 1.0 opened write transactions on a second database connection that SQLCipher had no key for; all writes now run on the keyed connection.

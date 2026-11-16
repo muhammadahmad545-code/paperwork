@@ -1,5 +1,5 @@
 import { Pressable, Text, useTheme } from '@basalt/core';
-import { X } from 'lucide-react-native';
+import X from 'lucide-react-native/icons/x';
 import React, { useState } from 'react';
 import { FlatList, Modal, View, useWindowDimensions } from 'react-native';
 import type { NativeScrollEvent, NativeSyntheticEvent } from 'react-native';

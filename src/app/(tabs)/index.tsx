@@ -1,6 +1,11 @@
 import { Appear, Aurora, Badge, Button, Card, Chip, EmptyState, Gradient, Hero, Pressable, Skeleton, TAB_BAR_SPACE, Text, UpdateCard, formatRelativeTime, toMessage, useTheme, useToast, useUpdater } from '@basalt/core';
 import { useFocusEffect, useRouter } from 'expo-router';
-import { FileScan, Images, Pin, Search, ShieldCheck, X } from 'lucide-react-native';
+import FileScan from 'lucide-react-native/icons/file-scan';
+import Images from 'lucide-react-native/icons/images';
+import Pin from 'lucide-react-native/icons/pin';
+import Search from 'lucide-react-native/icons/search';
+import ShieldCheck from 'lucide-react-native/icons/shield-check';
+import X from 'lucide-react-native/icons/x';
 import React, { useCallback, useEffect, useState } from 'react';
 import { FlatList, ScrollView, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';

@@ -1,7 +1,11 @@
 import { Button, Card, Chip, Hero, ListItem, Screen, SectionTitle, SegmentedControl, TAB_BAR_SPACE, Text, Toggle, UpdateCard, themePreference, toMessage, useTheme, useToast, useUpdater } from '@basalt/core';
 import { canUseLock } from '@basalt/core/src/lock/LockGate';
 import * as Linking from 'expo-linking';
-import { Code, RefreshCw, ShieldCheck, Sparkles, Trash2 } from 'lucide-react-native';
+import Code from 'lucide-react-native/icons/code';
+import RefreshCw from 'lucide-react-native/icons/refresh-cw';
+import ShieldCheck from 'lucide-react-native/icons/shield-check';
+import Sparkles from 'lucide-react-native/icons/sparkles';
+import Trash2 from 'lucide-react-native/icons/trash';
 import React from 'react';
 import { Alert, View } from 'react-native';
 import { Native } from '../../lib/capture';
