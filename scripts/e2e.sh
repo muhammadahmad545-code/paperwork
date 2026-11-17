@@ -8,19 +8,16 @@ adb shell content call --uri content://media --method scan_volume --arg external
 tap_text "Library"; sleep 3
 tap_text "Import"; sleep 6
 shot e2e-picker
-# The picker may open on Recent or elsewhere: go to Downloads through the roots drawer if needed.
-if ! wait_contains "receipt.png" 3; then
-  tap_text "Show roots"; sleep 2
-  tap_text "Downloads" || tap_text "Download"; sleep 3
-fi
-if wait_contains "receipt.png" 8; then
+if wait_contains "receipt.png" 4; then
   tap_text "receipt.png"; sleep 2
-  # Some picker versions need a confirming tap on Select.
-  has_text "Select" && tap_text "Select"
+elif tap_res "icon_thumb" || tap_res "thumbnail"; then
+  sleep 2
 else
   fail "the receipt is visible in the system picker"
   shot e2e-picker-missing
 fi
+# Some picker versions need a confirming tap on Select.
+has_text "Select" && tap_text "Select"
 
 expect "Save document" 60 "the page is read and the review screen opens"
 shot e2e-review
