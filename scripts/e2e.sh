@@ -10,7 +10,8 @@ tap_text "Import"; sleep 6
 shot e2e-picker
 if wait_contains "receipt.png" 4; then
   tap_text "receipt.png"; sleep 2
-elif tap_res "icon_thumb" || tap_res "thumbnail"; then
+# Tap the lower-left of the thumbnail: its top-right corner opens a preview instead of picking.
+elif tap_res "icon_thumb" 0.25 0.8 || tap_res "thumbnail" 0.25 0.8; then
   sleep 2
 else
   fail "the receipt is visible in the system picker"
