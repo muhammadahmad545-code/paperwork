@@ -179,7 +179,20 @@ const toDate = (r: DateRecord): DateRow => {
   return { id: r.id, docId: r.doc_id, kind: r.kind, iso: r.iso, label: r.label, remind: r.remind === 1, reminderIds: ids, docTitle: r.doc_title, docType: r.doc_type };
 };
 
-export async function listDocuments(search: string, type: DocType | null): Promise<DocumentRow[]> {
+export type SortOrder = 'newest' | 'oldest' | 'title' | 'expiring';
+
+const ORDER: Record<SortOrder, string> = {
+  newest: 'd.pinned DESC, d.created_at DESC',
+  oldest: 'd.pinned DESC, d.created_at ASC',
+  title: 'd.pinned DESC, d.title COLLATE NOCASE ASC',
+  // Soonest upcoming expiry, due or warranty date first; documents without one go last.
+  expiring: `d.pinned DESC,
+    (SELECT MIN(iso) FROM dates x WHERE x.doc_id = d.id AND x.kind IN ('expiry', 'due', 'warranty') AND x.iso >= date('now', 'localtime')) IS NULL,
+    (SELECT MIN(iso) FROM dates x WHERE x.doc_id = d.id AND x.kind IN ('expiry', 'due', 'warranty') AND x.iso >= date('now', 'localtime')) ASC,
+    d.created_at DESC`,
+};
+
+export async function listDocuments(search: string, type: DocType | null, sort: SortOrder = 'newest'): Promise<DocumentRow[]> {
   const database = await db();
   const where: string[] = [];
   const args: (string | number)[] = [];
@@ -193,7 +206,7 @@ export async function listDocuments(search: string, type: DocType | null): Promi
     args.push(type);
   }
   const clause = where.length ? `WHERE ${where.join(' AND ')}` : '';
-  const rows = await database.getAllAsync<DocRecord>(`SELECT ${DOC_COLUMNS} FROM documents d ${clause} ORDER BY d.pinned DESC, d.created_at DESC LIMIT 1000`, args);
+  const rows = await database.getAllAsync<DocRecord>(`SELECT ${DOC_COLUMNS} FROM documents d ${clause} ORDER BY ${ORDER[sort] ?? ORDER.newest} LIMIT 1000`, args);
   return rows.map(toDoc);
 }
 

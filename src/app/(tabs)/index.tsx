@@ -16,7 +16,7 @@ import type { DateRow, DocumentRow } from '../../lib/db';
 import { KIND_LABELS, daysUntil, relativeDays, tone } from '../../lib/dates';
 import { TYPE_LABELS } from '../../lib/extract';
 import type { DocType } from '../../lib/extract';
-import { UPDATE_SOURCE } from '../../lib/settings';
+import { UPDATE_SOURCE, sortSetting } from '../../lib/settings';
 
 function badgeTone(days: number): 'danger' | 'warning' | 'muted' {
   const t = tone(days);
@@ -31,17 +31,18 @@ export default function Library() {
   const updater = useUpdater({ source: UPDATE_SOURCE });
   const [search, setSearch] = useState('');
   const [type, setType] = useState<DocType | null>(null);
+  const [sort, setSort] = sortSetting.use();
   const [docs, setDocs] = useState<DocumentRow[] | null>(null);
   const [upcoming, setUpcoming] = useState<DateRow[]>([]);
 
   const load = useCallback(async () => {
     try {
-      setDocs(await listDocuments(search, type));
+      setDocs(await listDocuments(search, type, sort));
     } catch (error) {
       setDocs([]);
       toast(toMessage(error, 'Could not open your documents.'), 'danger');
     }
-  }, [search, type, toast]);
+  }, [search, type, sort, toast]);
 
   useEffect(() => {
     const t = setTimeout(() => void load(), search ? 200 : 0);
@@ -154,6 +155,23 @@ export default function Library() {
           <Chip key={t} label={TYPE_LABELS[t]} selected={type === t} onPress={() => setType(type === t ? null : t)} />
         ))}
       </ScrollView>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.sm }}>
+        <Text variant="caption" color="textMuted">
+          Sort
+        </Text>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: spacing.sm }}>
+          {(
+            [
+              ['newest', 'Newest'],
+              ['oldest', 'Oldest'],
+              ['title', 'A–Z'],
+              ['expiring', 'Expiring soon'],
+            ] as const
+          ).map(([value, label]) => (
+            <Chip key={value} label={label} selected={sort === value} onPress={() => setSort(value)} />
+          ))}
+        </ScrollView>
+      </View>
       {docs === null ? (
         <View style={{ flexDirection: 'row', gap: spacing.md }}>
           <Skeleton width="48%" height={220} radius={16} />
