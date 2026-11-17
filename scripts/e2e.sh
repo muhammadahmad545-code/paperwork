@@ -4,11 +4,17 @@
 
 adb push e2e/receipt.png /sdcard/Download/receipt.png >/dev/null
 adb shell content call --uri content://media --method scan_volume --arg external_primary >/dev/null 2>&1
+sleep 5
 
 tap_text "Library"; sleep 3
 tap_text "Import"; sleep 6
 shot e2e-picker
-if wait_contains "receipt.png" 4; then
+# "Recent" depends on the media index, which may not have caught up; Downloads lists files directly.
+if ! has_text "receipt.png"; then
+  tap_text "Show roots"; sleep 2
+  tap_text "Downloads" || tap_text "Download"; sleep 4
+fi
+if wait_contains "receipt.png" 6; then
   tap_text "receipt.png"; sleep 2
 # Tap the lower-left of the thumbnail: its top-right corner opens a preview instead of picking.
 elif tap_res "icon_thumb" 0.25 0.8 || tap_res "thumbnail" 0.25 0.8; then
