@@ -34,7 +34,7 @@ export default function InsightsScreen() {
         <>
           <Appear index={0} style={{ flexDirection: 'row', gap: spacing.sm }}>
             <StatTile label="Documents" value={String(data.documents)} detail={`${data.pages} pages`} />
-            <StatTile label="Expiring this year" value={String(data.expiringThisYear)} />
+            <StatTile label="Expiring" value={String(data.expiringThisYear)} detail="this year" />
           </Appear>
           {data.currency && months.length > 0 ? (
             <Appear index={1}>
